@@ -4,6 +4,7 @@ from .headers import get_headers
 import sys
 import io
 import gzip
+import lzma
 import struct
 from rpmfile import cpiofile
 from functools import wraps
@@ -38,7 +39,7 @@ class RPMInfo(object):
 
     @classmethod
     def _read(cls, magic, fileobj):
-        if magic == '070701':
+        if magic == b'070701':
             return cls._read_new(fileobj, magic=magic)
         else:
             raise Exception('bad magic number %r' % magic)
@@ -108,10 +109,10 @@ class RPMFile(object):
         '''
         if self._members is None:
             self._members = _members = []
-            g = self.gzip_file
+            g = self.data_file
             magic = g.read(2)
             while magic:
-                if magic == '07':
+                if magic == b'07':
                     magic += g.read(4)
                     member = RPMInfo._read(magic, g)
 
@@ -148,17 +149,23 @@ class RPMFile(object):
         '''
         if not isinstance(member, RPMInfo):
             member = self.getmember(member)
-        return _SubFile(self.gzip_file, member.file_start, member.size)
+        return _SubFile(self.data_file, member.file_start, member.size)
 
-    _gzip_file = None
+    _data_file = None
 
     @property
-    def gzip_file(self):
-        'Return the uncompressed raw CPIO data of the RPM archive'
-        if self._gzip_file is None:
+    def data_file(self):
+        """Return the uncompressed raw CPIO data of the RPM archive."""
+
+        if self._data_file is None:
             fileobj = _SubFile(self._fileobj, self.data_offset)
-            self._gzip_file = gzip.GzipFile(fileobj=fileobj)
-        return self._gzip_file
+
+            if self.headers["archive_compression"] == b"xz":
+                self._data_file = lzma.LZMAFile(fileobj)
+            else:
+                self._data_file = gzip.GzipFile(fileobj=fileobj)
+
+        return self._data_file
 
 def open(name=None, mode='rb', fileobj=None):
     '''
